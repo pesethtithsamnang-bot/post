@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scan POS demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+:root{
+  --paper:#FFFFFF; --bg:#EEF1F4; --ink:#16222E; --muted:#5B6B7A; --line:#D5DCE3;
+  --tag:#FFC928; --tag-ink:#1A1400; --ok:#138A5B; --bad:#C93B3B;
+  --body:"Manrope",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --num:"Barlow Condensed","Arial Narrow",system-ui,sans-serif;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--paper:#18222C;--bg:#0F161D;--ink:#E8EEF3;--muted:#93A3B2;--line:#2A3743;--ok:#3CC08A;--bad:#F07070;}
+}
+:root[data-theme="dark"]{--paper:#18222C;--bg:#0F161D;--ink:#E8EEF3;--muted:#93A3B2;--line:#2A3743;--ok:#3CC08A;--bad:#F07070;}
+html{scroll-padding-top:env(safe-area-inset-top,0px);}
+*,*::before,*::after{box-sizing:inherit;}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45;}
+button,input{font:inherit;color:inherit;}
+button{cursor:pointer;}
+:focus-visible{outline:3px solid var(--tag);outline-offset:2px;}
+.app{max-width:560px;margin:0 auto;padding:12px 14px 96px;}
+header{display:flex;justify-content:space-between;align-items:baseline;padding:6px 2px 12px;}
+header h1{margin:0;font-size:1.25rem;font-weight:800;}
+header p{margin:0;color:var(--muted);font-size:.85rem;}
+
+/* scanner */
+.scanner{background:#000;border-radius:18px;overflow:hidden;position:relative;}
+#reader{width:100%;min-height:220px;}
+#reader video{object-fit:cover;}
+.idle{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff;text-align:center;padding:20px;}
+.idle.hide{display:none;}
+.frame{width:70%;height:90px;border:3px solid var(--tag);border-radius:10px;opacity:.9;}
+.camrow{display:flex;gap:8px;margin:10px 0 18px;}
+.camrow input{flex:1;min-width:0;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--paper);}
+.btn{border:0;border-radius:12px;padding:12px 16px;font-weight:700;background:var(--paper);border:1.5px solid var(--line);}
+.btn.primary{background:var(--tag);color:var(--tag-ink);border-color:var(--tag);}
+.btn.dark{background:var(--ink);color:var(--paper);border-color:var(--ink);}
+.btn.danger{color:var(--bad);background:transparent;border-color:transparent;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+.btn.cam{position:absolute;right:10px;bottom:10px;z-index:3;padding:8px 12px;font-size:.85rem;}
+
+/* lists */
+.panel{background:var(--paper);border-radius:16px;border:1px solid var(--line);}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);}
+.row:first-child{border-top:0;}
+.row .info{flex:1;min-width:0;}
+.row .name{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.row .meta{color:var(--muted);font-size:.8rem;}
+.price{font-family:var(--num);font-weight:700;font-size:1.35rem;letter-spacing:.01em;}
+.tagprice{font-family:var(--num);font-weight:700;background:var(--tag);color:var(--tag-ink);padding:2px 10px;border-radius:6px;font-size:1.15rem;}
+.stepper{display:flex;align-items:center;border:1.5px solid var(--line);border-radius:10px;}
+.stepper button{background:none;border:0;width:34px;height:34px;font-size:1.1rem;font-weight:800;}
+.stepper span{min-width:22px;text-align:center;font-weight:700;}
+.empty{padding:28px 18px;text-align:center;color:var(--muted);}
+.low{color:var(--bad);font-weight:700;}
+.search{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--paper);margin-bottom:10px;}
+.rowbtn{width:100%;text-align:left;background:none;border:0;}
+
+/* checkout */
+.total{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px;background:var(--ink);color:var(--paper);border-radius:16px;padding:14px 16px;}
+.total .big{font-family:var(--num);font-weight:700;font-size:2.6rem;line-height:1;}
+.total small{display:block;opacity:.7;font-size:.85rem;}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;}
+.stat{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:12px;}
+.stat b{display:block;font-family:var(--num);font-size:1.7rem;line-height:1.1;}
+.stat span{color:var(--muted);font-size:.8rem;}
+
+/* nav */
+nav{position:fixed;left:0;right:0;bottom:0;background:var(--paper);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom,0px);z-index:10;}
+nav .in{display:flex;max-width:560px;width:100%;}
+nav button{flex:1;background:none;border:0;padding:10px 0 12px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:.78rem;font-weight:700;color:var(--muted);}
+nav button svg{width:24px;height:24px;}
+nav button[aria-current="true"]{color:var(--ink);}
+nav button[aria-current="true"] svg{color:var(--ink);background:var(--tag);border-radius:8px;padding:2px;box-sizing:content-box;}
+
+/* sheet */
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20;}
+.sheet[hidden]{display:none;}
+.card{background:var(--paper);width:100%;max-width:560px;border-radius:20px 20px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom,0px));max-height:90%;overflow:auto;}
+.card h2{margin:0;font-size:1.2rem;}
+.card .code{margin:2px 0 14px;color:var(--muted);font-size:.85rem;}
+.card label{display:block;font-weight:600;font-size:.9rem;margin-bottom:12px;}
+.card input{display:block;width:100%;margin-top:4px;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px;background:var(--bg);}
+.quick{display:flex;gap:6px;margin:-4px 0 14px;flex-wrap:wrap;}
+.quick button{padding:6px 12px;border-radius:999px;border:1.5px solid var(--line);background:none;font-weight:700;}
+.actions{display:flex;gap:8px;}
+.actions .btn{flex:1;}
+.current{display:flex;justify-content:space-between;background:var(--bg);border-radius:12px;padding:10px 14px;margin-bottom:12px;font-weight:600;}
+
+.toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:12px;font-weight:600;font-size:.9rem;z-index:30;max-width:90%;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s;}
+.toast.show{opacity:1;}
+@media (prefers-reduced-motion:reduce){.toast{transition:none;}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Demo Shop</h1>
+    <p id="hint">Scanning adds to the sale</p>
+  </header>
+
+  <div class="scanner">
+    <div id="reader"></div>
+    <div class="idle" id="idle">
+      <div class="frame" aria-hidden="true"></div>
+      <div>Point the back camera at a barcode</div>
+    </div>
+    <button class="btn primary cam" id="camBtn">Start camera</button>
+  </div>
+  <form class="camrow" id="manual">
+    <input id="manualCode" placeholder="Or type a barcode" inputmode="numeric" autocomplete="off" aria-label="Barcode">
+    <button class="btn dark" type="submit">Enter</button>
+  </form>
+
+  <main id="view"></main>
+</div>
+
+<nav><div class="in">
+  <button data-tab="sell" aria-current="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 12.4a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 2-1.5L21 8H6"/></svg>Sell</button>
+  <button data-tab="stock">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>Stock</button>
+  <button data-tab="sales">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Sales</button>
+</div></nav>
+
+<div class="sheet" id="sheet" hidden>
+  <form class="card" id="sheetForm">
+    <h2 id="shTitle">New product</h2>
+    <p class="code" id="shCode"></p>
+    <label>Product name<input id="fName" required autocomplete="off"></label>
+    <label>Price (USD)<input id="fPrice" type="number" step="0.01" min="0" inputmode="decimal" required></label>
+    <div id="curStock" class="current" hidden></div>
+    <label id="qtyLabel">Starting stock<input id="fQty" type="number" step="1" inputmode="numeric" value="0"></label>
+    <div class="quick" id="quick">
+      <button type="button" data-q="1">+1</button><button type="button" data-q="6">+6</button>
+      <button type="button" data-q="12">+12</button><button type="button" data-q="24">+24</button>
+    </div>
+    <div class="actions">
+      <button type="button" class="btn" id="shCancel">Cancel</button>
+      <button type="submit" class="btn primary" id="shSave">Save product</button>
+    </div>
+    <button type="button" class="btn danger" id="shDelete" style="width:100%;margin-top:8px" hidden>Delete product</button>
+  </form>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const KEY = 'pos-demo-v1';
+const RATE = 4100; // riel per USD
+let db = { products: {}, sales: [] };
+try { const raw = localStorage.getItem(KEY); if (raw) db = JSON.parse(raw); } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) {} }
+
+let tab = 'sell', cart = [], scanner = null, running = false, last = { code: '', t: 0 }, editing = null;
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+const usd = n => '$' + n.toFixed(2);
+const riel = n => (Math.round(n * RATE / 100) * 100).toLocaleString() + ' ៛';
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2200);
+}
+function beep() {
+  try {
+    const ctx = beep.ctx || (beep.ctx = new (window.AudioContext || window.webkitAudioContext)());
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 1400; g.gain.value = 0.08; o.connect(g); g.connect(ctx.destination);
+    o.start(); o.stop(ctx.currentTime + 0.08);
+  } catch (e) {}
+}
+
+/* ---------- scanning ---------- */
+async function toggleCam() {
+  if (running) { await scanner.stop().catch(() => {}); running = false; return updateCam(); }
+  if (!window.Html5Qrcode) return toast('Scanner failed to load. Type the barcode instead.');
+  const F = Html5QrcodeSupportedFormats;
+  scanner = scanner || new Html5Qrcode('reader', {
+    verbose: false,
+    formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.QR_CODE],
+    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+  });
+  try {
+    await scanner.start({ facingMode: 'environment' },
+      { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * .85), height: Math.max(60, Math.floor(Math.min(h * .5, 160))) }) },
+      onScan, () => {});
+    running = true;
+  } catch (e) {
+    toast('Camera blocked. Allow camera access, or type the barcode below.');
+  }
+  updateCam();
+}
+function updateCam() {
+  $('#camBtn').textContent = running ? 'Stop camera' : 'Start camera';
+  $('#idle').classList.toggle('hide', running);
+}
+function onScan(code) {
+  const now = Date.now();
+  if (editing !== null) return; // ignore while the form is open
+  if (code === last.code && now - last.t < 2500) return;
+  last = { code, t: now };
+  beep(); if (navigator.vibrate) navigator.vibrate(60);
+  handleCode(code);
+}
+function handleCode(code) {
+  code = code.trim(); if (!code) return;
+  const p = db.products[code];
+  if (tab === 'sales') setTab('sell');
+  if (tab === 'sell') {
+    if (p) addToCart(code);
+    else { toast('New barcode. Add it to your stock first.'); openSheet(code); }
+  } else {
+    openSheet(code);
+  }
+}
+
+/* ---------- cart ---------- */
+function addToCart(code) {
+  const item = cart.find(i => i.code === code);
+  if (item) item.qty++; else cart.push({ code, qty: 1 });
+  toast('Added ' + db.products[code].name);
+  render();
+}
+function changeQty(code, d) {
+  const item = cart.find(i => i.code === code); if (!item) return;
+  item.qty += d; if (item.qty <= 0) cart = cart.filter(i => i.code !== code);
+  render();
+}
+function cartTotal() { return cart.reduce((s, i) => s + db.products[i.code].price * i.qty, 0); }
+function checkout() {
+  for (const i of cart) {
+    const p = db.products[i.code];
+    if (i.qty > p.stock) return toast(`Only ${p.stock} left of ${p.name}`);
+  }
+  const items = cart.map(i => ({ code: i.code, name: db.products[i.code].name, price: db.products[i.code].price, qty: i.qty }));
+  cart.forEach(i => db.products[i.code].stock -= i.qty);
+  db.sales.unshift({ id: Date.now(), time: new Date().toISOString(), items, total: cartTotal() });
+  cart = []; save(); toast('Sale completed'); render();
+}
+
+/* ---------- product sheet ---------- */
+function openSheet(code) {
+  editing = code;
+  const p = db.products[code];
+  $('#shTitle').textContent = p ? 'Update product' : 'New product';
+  $('#shCode').textContent = 'Barcode ' + code;
+  $('#fName').value = p ? p.name : '';
+  $('#fPrice').value = p ? p.price.toFixed(2) : '';
+  $('#fQty').value = p ? 0 : 1;
+  $('#qtyLabel').firstChild.textContent = p ? 'Add to stock' : 'Starting stock';
+  $('#curStock').hidden = !p;
+  if (p) $('#curStock').innerHTML = `<span>In stock now</span><span>${p.stock}</span>`;
+  $('#shDelete').hidden = !p;
+  $('#sheet').hidden = false;
+  setTimeout(() => (p ? $('#fQty') : $('#fName')).focus(), 50);
+}
+function closeSheet() { $('#sheet').hidden = true; editing = null; }
+$('#sheetForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const code = editing, isNew = !db.products[code];
+  const name = $('#fName').value.trim(), price = parseFloat($('#fPrice').value), qty = parseInt($('#fQty').value || '0', 10);
+  if (!name || isNaN(price)) return toast('Add a name and a price');
+  const oldStock = isNew ? 0 : db.products[code].stock;
+  db.products[code] = { name, price, stock: Math.max(0, oldStock + qty) };
+  save(); closeSheet();
+  toast(isNew ? `Saved ${name}` : `Updated ${name}`);
+  if (tab === 'sell' && isNew) addToCart(code); else render();
+});
+$('#shCancel').onclick = closeSheet;
+$('#shDelete').onclick = () => {
+  if (!confirm('Delete this product?')) return;
+  delete db.products[editing]; cart = cart.filter(i => i.code !== editing);
+  save(); closeSheet(); toast('Product deleted'); render();
+};
+$('#quick').addEventListener('click', e => {
+  const q = e.target.dataset.q; if (!q) return;
+  $('#fQty').value = (parseInt($('#fQty').value || '0', 10) + +q);
+});
+$('#sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+
+/* ---------- views ---------- */
+function render() {
+  const v = $('#view');
+  if (tab === 'sell') {
+    const total = cartTotal();
+    v.innerHTML = `<div class="panel">${cart.length ? cart.map(i => {
+      const p = db.products[i.code];
+      return `<div class="row"><div class="info"><div class="name">${esc(p.name)}</div>
+        <div class="meta">${usd(p.price)} each · ${p.stock} in stock</div></div>
+        <div class="stepper"><button aria-label="Remove one" data-d="-1" data-c="${esc(i.code)}">−</button><span>${i.qty}</span>
+        <button aria-label="Add one" data-d="1" data-c="${esc(i.code)}">+</button></div>
+        <div class="price">${usd(p.price * i.qty)}</div></div>`;
+    }).join('') : `<p class="empty">Scan a product to start a sale.</p>`}</div>
+    <div class="total"><div><span class="big">${usd(total)}</span><small>${riel(total)}</small></div>
+      <button class="btn primary" id="pay" ${cart.length ? '' : 'disabled'}>Complete sale</button></div>`;
+    v.querySelectorAll('[data-d]').forEach(b => b.onclick = () => changeQty(b.dataset.c, +b.dataset.d));
+    const pay = $('#pay'); if (pay) pay.onclick = checkout;
+  }
+  if (tab === 'stock') {
+    const list = Object.entries(db.products);
+    if (!list.length) {
+      v.innerHTML = `<div class="panel empty">No products yet. Scan a barcode to add your first one.
+        <div style="margin-top:14px"><button class="btn primary" id="sample">Load sample products</button></div></div>`;
+      $('#sample').onclick = loadSample; return;
+    }
+    v.innerHTML = `<input class="search" id="q" placeholder="Search products" value="${esc(render.q || '')}">
+      <div class="panel" id="list"></div>`;
+    const draw = () => {
+      const q = (render.q || '').toLowerCase();
+      const rows = list.filter(([c, p]) => p.name.toLowerCase().includes(q) || c.includes(q))
+        .sort((a, b) => a[1].name.localeCompare(b[1].name));
+      $('#list').innerHTML = rows.length ? rows.map(([c, p]) => `<button class="row rowbtn" data-c="${esc(c)}">
+        <div class="info"><div class="name">${esc(p.name)}</div>
+        <div class="meta">${esc(c)} · <span class="${p.stock <= 3 ? 'low' : ''}">${p.stock} in stock${p.stock <= 3 ? ', running low' : ''}</span></div></div>
+        <span class="tagprice">${usd(p.price)}</span></button>`).join('') : `<p class="empty">No products match that search.</p>`;
+      $('#list').querySelectorAll('[data-c]').forEach(b => b.onclick = () => openSheet(b.dataset.c));
+    };
+    $('#q').oninput = e => { render.q = e.target.value; draw(); };
+    draw();
+  }
+  if (tab === 'sales') {
+    const today = new Date().toDateString();
+    const todays = db.sales.filter(s => new Date(s.time).toDateString() === today);
+    const rev = todays.reduce((s, x) => s + x.total, 0);
+    const items = todays.reduce((s, x) => s + x.items.reduce((a, i) => a + i.qty, 0), 0);
+    v.innerHTML = `<div class="stats">
+      <div class="stat"><b>${usd(rev)}</b><span>Today</span></div>
+      <div class="stat"><b>${todays.length}</b><span>Sales</span></div>
+      <div class="stat"><b>${items}</b><span>Items sold</span></div></div>
+      <div class="panel">${db.sales.length ? db.sales.slice(0, 50).map(s => `<div class="row"><div class="info">
+        <div class="name">${s.items.map(i => esc(i.name) + (i.qty > 1 ? ' ×' + i.qty : '')).join(', ')}</div>
+        <div class="meta">${new Date(s.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</div></div>
+        <div class="price">${usd(s.total)}</div></div>`).join('') : `<p class="empty">No sales yet. Complete a sale to see it here.</p>`}</div>
+      ${db.sales.length || Object.keys(db.products).length ? `<button class="btn danger" id="reset" style="width:100%;margin-top:10px">Reset demo data</button>` : ''}`;
+    const r = $('#reset'); if (r) r.onclick = () => { if (confirm('Delete all products and sales?')) { db = { products: {}, sales: [] }; cart = []; save(); render(); } };
+  }
+}
+function loadSample() {
+  const s = [['8850999320014','Angkor Beer 330ml',0.75,24],['8851959132012','Coca-Cola 330ml',0.60,30],
+    ['8850987101021','Mama Noodles Pork',0.35,50],['8886008101053','Drinking Water 500ml',0.40,40],['7622210449283','Oreo 137g',1.25,3]];
+  s.forEach(([c, n, p, q]) => db.products[c] = { name: n, price: p, stock: q });
+  save(); render(); toast('Sample products loaded. Type 8850999320014 to test.');
+}
+function setTab(t) {
+  tab = t;
+  document.querySelectorAll('nav button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === t));
+  $('#hint').textContent = { sell: 'Scanning adds to the sale', stock: 'Scanning adds or updates stock', sales: 'Scanning starts a sale' }[t];
+  render();
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+$('#camBtn').onclick = toggleCam;
+$('#manual').addEventListener('submit', e => { e.preventDefault(); handleCode($('#manualCode').value); $('#manualCode').value = ''; });
+render();
+</script>
+</body>
+</html>
