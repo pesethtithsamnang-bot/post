@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Manrope:wght@400;600;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
 <style>
 :root{
   --paper:#FFFFFF; --bg:#EEF1F4; --ink:#16222E; --muted:#5B6B7A; --line:#D5DCE3;
@@ -34,8 +34,12 @@ header p{margin:0;color:var(--muted);font-size:.85rem;}
 
 /* scanner */
 .scanner{background:#000;border-radius:18px;overflow:hidden;position:relative;}
-#reader{width:100%;min-height:220px;}
-#reader video{object-fit:cover;}
+#video{display:block;width:100%;height:240px;object-fit:cover;background:#000;}
+.aim{position:absolute;left:8%;right:8%;top:50%;height:110px;transform:translateY(-50%);border:3px solid var(--tag);border-radius:10px;pointer-events:none;box-shadow:0 0 0 999px rgba(0,0,0,.25);}
+.aim.hide{display:none;}
+.status{font-size:.82rem;color:var(--muted);margin:8px 2px 0;min-height:1.2em;}
+.status.err{color:var(--bad);font-weight:600;}
+.btn.torch{position:absolute;left:10px;bottom:10px;z-index:3;padding:8px 12px;font-size:.85rem;}
 .idle{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#fff;text-align:center;padding:20px;}
 .idle.hide{display:none;}
 .frame{width:70%;height:90px;border:3px solid var(--tag);border-radius:10px;opacity:.9;}
@@ -109,14 +113,17 @@ nav button[aria-current="true"] svg{color:var(--ink);background:var(--tag);borde
   </header>
 
   <div class="scanner">
-    <div id="reader"></div>
+    <video id="video" playsinline muted autoplay></video>
+    <div class="aim hide" id="aim" aria-hidden="true"></div>
     <div class="idle" id="idle">
       <div class="frame" aria-hidden="true"></div>
       <div>Point the back camera at a barcode</div>
     </div>
+    <button class="btn torch" id="torchBtn" hidden>Light</button>
     <button class="btn primary cam" id="camBtn">Start camera</button>
   </div>
-  <form class="camrow" id="manual">
+  <p class="status" id="status" role="status"></p>
+  <form class="camrow" id="manual" style="margin-top:6px">
     <input id="manualCode" placeholder="Or type a barcode" inputmode="numeric" autocomplete="off" aria-label="Barcode">
     <button class="btn dark" type="submit">Enter</button>
   </form>
@@ -181,28 +188,90 @@ function beep() {
 }
 
 /* ---------- scanning ---------- */
-async function toggleCam() {
-  if (running) { await scanner.stop().catch(() => {}); running = false; return updateCam(); }
-  if (!window.Html5Qrcode) return toast('Scanner failed to load. Type the barcode instead.');
-  const F = Html5QrcodeSupportedFormats;
-  scanner = scanner || new Html5Qrcode('reader', {
-    verbose: false,
-    formatsToSupport: [F.EAN_13, F.EAN_8, F.UPC_A, F.UPC_E, F.CODE_128, F.CODE_39, F.QR_CODE],
-    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
-  });
+// Engine 1: native BarcodeDetector (fast, Android Chrome). Engine 2: ZXing (works on iPhone and everywhere else).
+let stream = null, detector = null, zx = null, torchOn = false;
+const video = document.getElementById('video');
+function status(msg, err) { const el = $('#status'); el.textContent = msg; el.classList.toggle('err', !!err); }
+
+async function toggleCam() { running ? stopCam() : startCam(); }
+
+async function startCam() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+    return status('This browser cannot open the camera here. The page must run over HTTPS. Type the barcode instead.', true);
+  status('Starting camera...');
   try {
-    await scanner.start({ facingMode: 'environment' },
-      { fps: 12, qrbox: (w, h) => ({ width: Math.floor(w * .85), height: Math.max(60, Math.floor(Math.min(h * .5, 160))) }) },
-      onScan, () => {});
-    running = true;
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
   } catch (e) {
-    toast('Camera blocked. Allow camera access, or type the barcode below.');
+    const why = {
+      NotAllowedError: 'Camera permission was blocked. Allow the camera for this site in your browser settings and try again.',
+      NotFoundError: 'No camera was found on this device.',
+      NotReadableError: 'Another app is using the camera. Close it and try again.',
+      SecurityError: 'This page is not allowed to use the camera. Open the file from an HTTPS site instead.'
+    }[e.name] || ('Camera failed: ' + e.name + ' ' + (e.message || ''));
+    return status(why, true);
   }
-  updateCam();
+  video.srcObject = stream;
+  try { await video.play(); } catch (e) {}
+  running = true; updateCam(); setupTorch();
+
+  let fmts = [];
+  if ('BarcodeDetector' in window) {
+    try { fmts = await BarcodeDetector.getSupportedFormats(); } catch (e) {}
+  }
+  const wanted = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'qr_code'];
+  const usable = fmts.filter(f => wanted.includes(f));
+  if (usable.length) {
+    detector = new BarcodeDetector({ formats: usable });
+    status('Scanning (fast mode). Hold the barcode inside the yellow box.');
+    nativeLoop();
+  } else if (window.ZXing) {
+    const Z = window.ZXing, hints = new Map();
+    hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.EAN_13, Z.BarcodeFormat.EAN_8, Z.BarcodeFormat.UPC_A,
+      Z.BarcodeFormat.UPC_E, Z.BarcodeFormat.CODE_128, Z.BarcodeFormat.CODE_39, Z.BarcodeFormat.QR_CODE]);
+    hints.set(Z.DecodeHintType.TRY_HARDER, true);
+    zx = new Z.BrowserMultiFormatReader(hints, 200);
+    status('Scanning (compatible mode). Hold the barcode inside the yellow box.');
+    zx.decodeFromStream(stream, video, res => { if (res) onScan(res.getText()); }).catch(() => {});
+  } else {
+    status('Scanner library failed to load. Check your internet, or type the barcode below.', true);
+  }
 }
+
+async function nativeLoop() {
+  if (!running || !detector) return;
+  if (video.readyState >= 2) {
+    try { const codes = await detector.detect(video); if (codes.length) onScan(codes[0].rawValue); } catch (e) {}
+  }
+  setTimeout(nativeLoop, 120);
+}
+
+function stopCam() {
+  running = false; detector = null;
+  if (zx) { try { zx.reset(); } catch (e) {} zx = null; }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; video.srcObject = null; torchOn = false;
+  $('#torchBtn').hidden = true; status(''); updateCam();
+}
+
+function setupTorch() {
+  const track = stream && stream.getVideoTracks()[0];
+  const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+  $('#torchBtn').hidden = !caps.torch;
+}
+$('#torchBtn').onclick = async () => {
+  const track = stream && stream.getVideoTracks()[0]; if (!track) return;
+  torchOn = !torchOn;
+  try { await track.applyConstraints({ advanced: [{ torch: torchOn }] }); } catch (e) { torchOn = false; }
+  $('#torchBtn').textContent = torchOn ? 'Light off' : 'Light';
+};
+
 function updateCam() {
   $('#camBtn').textContent = running ? 'Stop camera' : 'Start camera';
   $('#idle').classList.toggle('hide', running);
+  $('#aim').classList.toggle('hide', !running);
 }
 function onScan(code) {
   const now = Date.now();
